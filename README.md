@@ -1,0 +1,2 @@
+# GetRich
+AI Stock Trading
