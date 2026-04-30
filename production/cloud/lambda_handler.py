@@ -69,11 +69,13 @@ def link_state_back(module_dir, state_files):
 
 def _ensure_work_module(name):
     """Mirror production/<name>/ from read-only /var/task to writable /tmp/work.
-    Also creates the logs/ dir the early_signal scripts write to."""
+    Always force-fresh copy because Lambda may reuse /tmp across invocations
+    and we want the latest /var/task contents (including universe_live.csv)."""
     src = TASK_ROOT / "production" / name
     dst = WORK_DIR / "production" / name
-    if not dst.exists():
-        shutil.copytree(src, dst)
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
     # Ensure logs/, state/, tracking/ subtrees exist (writable)
     (WORK_DIR / "production" / "logs").mkdir(parents=True, exist_ok=True)
     (WORK_DIR / "production" / "state").mkdir(parents=True, exist_ok=True)
@@ -91,8 +93,11 @@ def run_v3_fresh():
     }
     link_state_into_module(module_dir, state_map)
 
-    # Set env for v3 account from secrets
-    os.environ["APCA_API_KEY_ID"] = os.environ["V3_FRESH_API_KEY"]
+    # Set env for v3 account from secrets. The v3 script reads ALPACA_API_KEY
+    # directly (not APCA_*); set both to be safe.
+    os.environ["ALPACA_API_KEY"]      = os.environ["V3_FRESH_API_KEY"]
+    os.environ["ALPACA_SECRET_KEY"]   = os.environ["V3_FRESH_API_SECRET"]
+    os.environ["APCA_API_KEY_ID"]     = os.environ["V3_FRESH_API_KEY"]
     os.environ["APCA_API_SECRET_KEY"] = os.environ["V3_FRESH_API_SECRET"]
     os.environ["V3_STATE_FILE"] = str(module_dir / "state_fresh.json")
 
@@ -129,12 +134,16 @@ def run_v4(account):
     link_state_into_module(module_dir, state_map)
 
     if account == "gtc":
-        os.environ["APCA_API_KEY_ID"] = os.environ["V4_GTC_API_KEY"]
+        os.environ["ALPACA_API_KEY"]      = os.environ["V4_GTC_API_KEY"]
+        os.environ["ALPACA_SECRET_KEY"]   = os.environ["V4_GTC_API_SECRET"]
+        os.environ["APCA_API_KEY_ID"]     = os.environ["V4_GTC_API_KEY"]
         os.environ["APCA_API_SECRET_KEY"] = os.environ["V4_GTC_API_SECRET"]
         os.environ["V4_STOP_MODE"] = "gtc"
         os.environ["V4_SCORING_MODE"] = "write"
     else:  # moc
-        os.environ["APCA_API_KEY_ID"] = os.environ["V4_MOC_API_KEY"]
+        os.environ["ALPACA_API_KEY"]      = os.environ["V4_MOC_API_KEY"]
+        os.environ["ALPACA_SECRET_KEY"]   = os.environ["V4_MOC_API_SECRET"]
+        os.environ["APCA_API_KEY_ID"]     = os.environ["V4_MOC_API_KEY"]
         os.environ["APCA_API_SECRET_KEY"] = os.environ["V4_MOC_API_SECRET"]
         os.environ["V4_STOP_MODE"] = "moc"
         os.environ["V4_SCORING_MODE"] = "read"
