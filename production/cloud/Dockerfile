@@ -41,6 +41,12 @@ COPY production/ml_v4/audit_features.py         ${LAMBDA_TASK_ROOT}/production/m
 COPY production/ml_v4/place_pending_stops.py    ${LAMBDA_TASK_ROOT}/production/ml_v4/place_pending_stops.py
 COPY production/ml_v4/universe_live.csv         ${LAMBDA_TASK_ROOT}/production/ml_v4/universe_live.csv
 
+# Patch Windows hardcoded paths in config.yaml to Lambda Linux paths
+RUN sed -i 's|C:\\\\ai-research-team\\\\v10_ml_v3\\\\seed_6|/var/task/v10_ml_v3/seed_6|g' \
+    ${LAMBDA_TASK_ROOT}/production/ml_v3/config.yaml && \
+    sed -i 's|C:\\\\ai-research-team\\\\v10_ml_v4_sortino\\\\saved_model_1188_s6|/var/task/v10_ml_v4_sortino/saved_model_1188_s6|g' \
+    ${LAMBDA_TASK_ROOT}/production/ml_v4/config.yaml
+
 # v3 model files (134 MB)
 COPY v10_ml_v3/seed_6/                    ${LAMBDA_TASK_ROOT}/v10_ml_v3/seed_6/
 

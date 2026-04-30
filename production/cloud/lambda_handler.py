@@ -23,9 +23,12 @@ from pathlib import Path
 sys.path.insert(0, "/var/task")
 import s3_state
 
-# Use /tmp/state as the runtime state location
+# Use /tmp/state as the runtime state location.
+# Lambda's /var/task is read-only, so we copy ml_v3/ and ml_v4/ subtrees to
+# /tmp/work/ (writable) and run from there. State files load/save under /tmp/work/.
 STATE_DIR = Path("/tmp/state")
-TASK_ROOT = Path("/var/task")  # where Dockerfile copied production/, v10_ml_v3/, etc.
+WORK_DIR = Path("/tmp/work")
+TASK_ROOT = Path("/var/task")  # source: where Dockerfile copied production/, v10_ml_v3/, etc.
 
 # 2026 NYSE holidays (matches run_all_signals.py)
 NYSE_HOLIDAYS_2026 = {
@@ -64,10 +67,19 @@ def link_state_back(module_dir, state_files):
             shutil.copy(src, dst)
 
 
+def _ensure_work_module(name):
+    """Mirror production/<name>/ from read-only /var/task to writable /tmp/work."""
+    src = TASK_ROOT / "production" / name
+    dst = WORK_DIR / "production" / name
+    if not dst.exists():
+        shutil.copytree(src, dst)
+    return dst
+
+
 def run_v3_fresh():
     """Run v3 fresh signal generator inline (no subprocess, Lambda is one process)."""
     print(f"[{datetime.now():%H:%M:%S}] === v3_fresh ===")
-    module_dir = TASK_ROOT / "production" / "ml_v3"
+    module_dir = _ensure_work_module("ml_v3")
     state_map = {
         "ml_v3/state_fresh.json": "state_fresh.json",
         "ml_v3/ohlcv_cache.pkl": "ohlcv_cache.pkl",
@@ -101,7 +113,7 @@ def run_v3_fresh():
 def run_v4(account):
     """account: 'gtc' or 'moc'."""
     print(f"[{datetime.now():%H:%M:%S}] === v4_{account} ===")
-    module_dir = TASK_ROOT / "production" / "ml_v4"
+    module_dir = _ensure_work_module("ml_v4")
     state_map = {
         f"ml_v4/state_{account}.json": f"state_{account}.json",
         f"ml_v4/ohlcv_cache_{account}.pkl": f"ohlcv_cache_{account}.pkl",
