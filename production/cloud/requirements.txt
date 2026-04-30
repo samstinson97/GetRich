@@ -1,13 +1,14 @@
 # Lambda image deps for signal generator
-# Pinned to versions matching local development (per local venv check 2026-04-29)
+# Loosened from local pins because Lambda base image (Python 3.11 on AL2)
+# may not have wheels for the very latest versions.
 boto3>=1.34.0
-lightgbm==4.6.0
-yfinance==0.2.58
-alpaca-py==0.43.2
+lightgbm>=4.0,<5.0
+yfinance>=0.2.50
+alpaca-py>=0.40
 alpaca-trade-api>=3.1.1   # Deprecated SDK — still used by update_dashboard.py + reconcile_fills.py
-pandas==3.0.1
-numpy>=1.26,<3.0
-scipy>=1.11
+pandas>=2.0,<3.0          # pandas 3.0 forces numpy 2.4+ which lacks AL2 wheels
+numpy>=1.26,<2.3          # numpy 2.3+ requires manylinux_2_28 (glibc 2.28) — AL2 only has 2.26
+scipy>=1.11,<1.14         # match numpy upper bound
 pyyaml>=6.0
 python-dotenv>=1.0
 requests>=2.31
