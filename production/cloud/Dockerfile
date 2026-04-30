@@ -6,8 +6,9 @@
 # support 3.12 cleanly.
 FROM public.ecr.aws/lambda/python:3.12
 
-# No system deps needed. LightGBM 4.6.0 wheel bundles libgomp; numpy/scipy
-# wheels are statically linked. Skipping system package install entirely.
+# LightGBM needs libgomp.so.1 (OpenMP runtime); not bundled in the wheel.
+# AL2023 uses dnf as its package manager.
+RUN dnf install -y libgomp && dnf clean all
 
 # Copy deps first (cache-friendly)
 COPY production/cloud/requirements.txt /tmp/requirements.txt
