@@ -3,8 +3,10 @@
 # Test:  docker run --rm getrich-signal-gen
 FROM public.ecr.aws/lambda/python:3.11
 
-# System deps (LightGBM needs libgomp; numpy/scipy use openblas)
-RUN dnf install -y libgomp tar gzip && dnf clean all
+# System deps (LightGBM needs libgomp; numpy/scipy use openblas).
+# AL2023 uses microdnf, not dnf. libgomp ships with LightGBM 4.6.0 wheel but
+# adding it explicitly is cheap insurance.
+RUN microdnf install -y libgomp tar gzip && microdnf clean all
 
 # Copy deps first (cache-friendly)
 COPY production/cloud/requirements.txt /tmp/requirements.txt
