@@ -19,9 +19,13 @@ sys.stdout.reconfigure(line_buffering=True)
 sys.path.insert(0, str(Path("c:/ai-research-team")))
 
 N_WORKERS = max(1, mp.cpu_count() - 1)
-ROOT = Path("c:/ai-research-team")
+ROOT = Path(os.environ.get("V10_2_ROOT", "c:/ai-research-team"))
 CACHE_DIR = ROOT / "factor_tournament"
-CACHE_DIR.mkdir(exist_ok=True)
+try:
+    CACHE_DIR.mkdir(exist_ok=True)
+except (OSError, FileNotFoundError):
+    # Non-fatal: production import only needs FACTOR_NAMES, not the cache.
+    pass
 FACTOR_CACHE = CACHE_DIR / "v10_2_factors.pkl"
 V3_PARQUET = ROOT / "market_data" / "precomputed_v3.parquet"
 V4_PARQUET = ROOT / "market_data" / "precomputed_v4_expanded.parquet"
