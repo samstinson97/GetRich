@@ -68,11 +68,16 @@ def link_state_back(module_dir, state_files):
 
 
 def _ensure_work_module(name):
-    """Mirror production/<name>/ from read-only /var/task to writable /tmp/work."""
+    """Mirror production/<name>/ from read-only /var/task to writable /tmp/work.
+    Also creates the logs/ dir the early_signal scripts write to."""
     src = TASK_ROOT / "production" / name
     dst = WORK_DIR / "production" / name
     if not dst.exists():
         shutil.copytree(src, dst)
+    # Ensure logs/, state/, tracking/ subtrees exist (writable)
+    (WORK_DIR / "production" / "logs").mkdir(parents=True, exist_ok=True)
+    (WORK_DIR / "production" / "state").mkdir(parents=True, exist_ok=True)
+    (WORK_DIR / "production" / "tracking").mkdir(parents=True, exist_ok=True)
     return dst
 
 
