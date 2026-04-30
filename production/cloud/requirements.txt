@@ -1,0 +1,13 @@
+# Lambda image deps for signal generator
+# Pinned to versions matching local development (per local venv check 2026-04-29)
+boto3>=1.34.0
+lightgbm==4.6.0
+yfinance==0.2.58
+alpaca-py==0.43.2
+alpaca-trade-api>=3.1.1   # Deprecated SDK — still used by update_dashboard.py + reconcile_fills.py
+pandas==3.0.1
+numpy>=1.26,<3.0
+scipy>=1.11
+pyyaml>=6.0
+python-dotenv>=1.0
+requests>=2.31

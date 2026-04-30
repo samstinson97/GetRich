@@ -1,0 +1,43 @@
+# ML v3 Seed 6 -- Paper Trading Config (Realistic MOC-Stop Engine)
+# Updated 2026-03-22
+
+model:
+  seed: 6
+  model_dir: "C:\\ai-research-team\\v10_ml_v3\\seed_6"
+  n_features: 45
+  current_model_year: 2026  # falls back to 2025 if not available
+
+exits:
+  stop_pct: 0.0216        # 2.16% stop (realistic MOC fills)
+  max_hold_days: 3
+  default_hold_days: 3
+  score_exit_floor: 0.54
+  trailing_pct: 0.038
+  trailing_activation: 0.019
+
+filters:
+  max_price: 75.6         # uses close[T-1]
+  ibs_max: 0.28
+  score_threshold: 0.68
+  min_dollar_volume: 5000000
+  min_history_days: 252
+
+account:
+  type: paper
+  broker: alpaca
+  capital: 100000
+  fractional_shares: true
+  max_positions: 1         # all-in-one
+
+schedule:
+  signal_time: "15:50"     # ET
+  report_time: "17:00"     # ET
+  stop_check_time: "09:31" # ET
+
+slippage:
+  cs_moc: 0.00064         # 0.064%/side
+
+monitoring:
+  max_tracking_error: 0.05
+  max_drawdown_alert: 0.20
+  slack_channel: "C0AK6PHTGD8"

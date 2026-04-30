@@ -1,0 +1,55 @@
+# GetRich Trading System — Locked Production Config
+# DO NOT EDIT without risk review
+
+factor_weights:
+  F14_IBS: 1.00
+  F32_SPYdist200: 1.00
+  F43_5dRoC: 0.95
+  F38_SPYcorr20d: 0.80
+  F30_Breadth: 0.70
+  F17_RealVol20d: 0.65
+  F28_SPY5dRet: 0.55
+  F25_VIX: 0.45
+  F23_VolAtLows: 0.40
+  F27_SPY1dRet: 0.15
+  F13_DD52wk: 0.10
+  F05_RSI14: 0.05
+  F40_LogPrice: 0.28
+
+entry_threshold: 0.45
+exit_score_floor: 0.30
+max_positions: 3  # score-weighted sizing
+rsi3_exit: 50
+max_hold_days: 14
+
+leverage:
+  base: 2.5
+  dynlev_bands:
+    - vix_upper: 20
+      multiplier: 1.0
+    - vix_upper: 30
+      multiplier: 0.75
+    - vix_upper: 40
+      multiplier: 0.50
+    - vix_upper: 999
+      multiplier: 0.25
+
+risk_limits:
+  max_position_pct: 0.40
+  daily_loss_halt: 0.08
+  cooldown_days: 2
+
+broker:
+  api_url: "https://paper-api.alpaca.markets"
+
+schedule:
+  data_refresh: "16:15"
+  trade: "16:30"
+  morning_check: "09:35"
+  daily_report: "17:00"
+
+paper_trading_gates:
+  min_days: 30
+  max_tracking_error: 0.05
+  max_slippage: 0.002
+  min_trades: 20

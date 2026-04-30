@@ -1,0 +1,65 @@
+# --- Secrets ---
+production/accounts/*.env
+*.env
+.env
+
+# --- Runtime state (synced via S3 in cloud, committed via local for dev) ---
+production/ml_v3/state*.json
+production/ml_v3/state*.bak.json
+production/ml_v3/ohlcv_cache.pkl
+production/ml_v4/state*.json
+production/ml_v4/state*.bak.*.json
+production/ml_v4/ohlcv_cache*.pkl
+production/ml_v4/shared_scoring_state.pkl
+production/ml_v4/shap_history*.json
+production/shared_scoring_state.pkl
+production/dashboard_data*.json
+production/tracking/*.csv
+production/state/
+production/logs/
+production/data/
+production/av_health/
+
+# --- Research datasets / outputs (too big for git) ---
+factor_tournament/
+market_data/
+backtest_results*/
+v10_ml_v6/
+v10_ml_v7/
+audit_*/
+optuna_*.db
+*.journal*
+shared_data*/
+
+# --- Big files ---
+*.pkl
+*.npy
+*.parquet
+features_*.npy
+
+# But keep small model files and cache .pkl that's intentionally committed
+!v10_ml_v3/seed_6/*.txt
+!v10_ml_v3/seed_6/*.json
+!v10_ml_v4_sortino/saved_model_1188_s6/*.txt
+!v10_ml_v4_sortino/saved_model_1188_s6/*.json
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# --- Virtual envs ---
+venv/
+.venv/
+env/
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

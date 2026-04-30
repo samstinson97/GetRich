@@ -1,0 +1,56 @@
+{
+  "seed_6_ml_cs": {
+    "cagr": 895.95,
+    "sharpe": 0.37,
+    "max_dd": -100.0,
+    "win_rate": 44.7,
+    "trades_per_yr": 89.9,
+    "n_trades": 646,
+    "final_equity": 2.089485529074872e+25
+  },
+  "seed_6_ml_flat": {
+    "cagr": 839.17,
+    "sharpe": 0.37,
+    "max_dd": -100.0,
+    "win_rate": 44.4,
+    "trades_per_yr": 85.1,
+    "n_trades": 611,
+    "final_equity": 4.8078850119346104e+24
+  },
+  "seed_6_v10_2_cs": {
+    "cagr": 344.4,
+    "sharpe": 1.81,
+    "max_dd": -44.3,
+    "win_rate": 40.3,
+    "trades_per_yr": 60.1,
+    "n_trades": 432,
+    "final_equity": 1901547008.0
+  },
+  "seed_6_v10_2_flat": {
+    "cagr": 325.44,
+    "sharpe": 1.77,
+    "max_dd": -44.3,
+    "win_rate": 40.1,
+    "trades_per_yr": 60.0,
+    "n_trades": 431,
+    "final_equity": 717789888.0
+  },
+  "seed_6_ensemble_cs": {
+    "cagr": 459.96,
+    "sharpe": 1.76,
+    "max_dd": -67.6,
+    "win_rate": 37.2,
+    "trades_per_yr": 80.5,
+    "n_trades": 578,
+    "final_equity": 4.779105355453956e+18
+  },
+  "seed_6_ensemble_flat": {
+    "cagr": 615.24,
+    "sharpe": 1.75,
+    "max_dd": -67.8,
+    "win_rate": 38.0,
+    "trades_per_yr": 80.6,
+    "n_trades": 579,
+    "final_equity": 1.1811911580197585e+19
+  }
+}

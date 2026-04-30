@@ -1,0 +1,47 @@
+# ML v4 #1188 Seed 6 -- Paper Trading Config
+# Created 2026-04-01
+# Two accounts: one with GTC stops, one with MOC stops
+
+model:
+  seed: 6
+  model_dir: "C:\\ai-research-team\\v10_ml_v4_sortino\\saved_model_1188_s6"
+  n_features: 77
+  current_model_year: 2026
+  # Target weights (for feature computation context only, model is pre-trained)
+  w_1d: 0.30
+  w_3d: 0.60
+  w_5d: 0.10
+
+exits:
+  stop_pct: 0.07           # 7% stop
+  max_hold_days: 6
+  default_hold_days: 1
+  score_exit_floor: 0.66
+  trailing_pct: 0.04
+  trailing_activation: 0.07
+
+filters:
+  max_price: 60.0
+  ibs_max: 0.13
+  score_threshold: 0.86
+  min_dollar_volume: 5000000
+  min_history_days: 252
+
+account:
+  type: paper
+  broker: alpaca
+  capital: 1000
+  fractional_shares: true
+  max_positions: 1
+
+schedule:
+  signal_time: "15:50"
+  report_time: "17:00"
+
+slippage:
+  cs_moc: 0.00064
+
+monitoring:
+  max_tracking_error: 0.05
+  max_drawdown_alert: 0.20
+  slack_channel: "C0AK6PHTGD8"

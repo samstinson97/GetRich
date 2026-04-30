@@ -1,0 +1,103 @@
+name: Build & deploy signal-gen Lambda
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'production/**'
+      - 'v10_ml_v3/seed_6/**'
+      - 'v10_ml_v4_sortino/saved_model_1188_s6/**'
+      - 'v10_2_engine.py'
+      - 'production/cloud/**'
+      - '.github/workflows/deploy-lambda.yml'
+  workflow_dispatch: {}
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: getrich-signal-gen
+  LAMBDA_FN: getrich-signal-gen
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE_TAG=$(git rev-parse --short HEAD)
+          docker build -f production/cloud/Dockerfile -t $REGISTRY/$ECR_REPO:$IMAGE_TAG -t $REGISTRY/$ECR_REPO:latest .
+          docker push $REGISTRY/$ECR_REPO:$IMAGE_TAG
+          docker push $REGISTRY/$ECR_REPO:latest
+          echo "IMAGE_URI=$REGISTRY/$ECR_REPO:$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Create or update Lambda function
+        env:
+          STATE_BUCKET: getrich-runtime-state-601512582170
+          ROLE_NAME: getrich-signal-gen-role
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ROLE_ARN="arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
+          if aws lambda get-function --function-name $LAMBDA_FN --region $AWS_REGION 2>/dev/null; then
+            echo "Lambda exists — updating image"
+            aws lambda update-function-code \
+              --function-name $LAMBDA_FN \
+              --image-uri $IMAGE_URI \
+              --region $AWS_REGION
+            aws lambda wait function-updated \
+              --function-name $LAMBDA_FN \
+              --region $AWS_REGION
+          else
+            echo "Lambda does not exist — creating"
+            aws lambda create-function \
+              --function-name $LAMBDA_FN \
+              --package-type Image \
+              --code ImageUri=$IMAGE_URI \
+              --role $ROLE_ARN \
+              --timeout 900 \
+              --memory-size 2048 \
+              --environment "Variables={STATE_S3_BUCKET=$STATE_BUCKET}" \
+              --region $AWS_REGION
+            aws lambda wait function-active \
+              --function-name $LAMBDA_FN \
+              --region $AWS_REGION
+          fi
+
+      - name: Connect Lambda to EventBridge rule (idempotent)
+        env:
+          EVENTBRIDGE_RULE: getrich-signal-gen-daily
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          aws events put-rule \
+            --name $EVENTBRIDGE_RULE \
+            --schedule-expression "cron(55 19 ? * MON-FRI *)" \
+            --description "Trigger getrich signal-gen at 19:55 UTC (3:55 PM EDT) Mon-Fri" \
+            --region $AWS_REGION
+          aws lambda add-permission \
+            --function-name $LAMBDA_FN \
+            --statement-id eventbridge-invoke \
+            --action lambda:InvokeFunction \
+            --principal events.amazonaws.com \
+            --source-arn arn:aws:events:$AWS_REGION:$ACCOUNT_ID:rule/$EVENTBRIDGE_RULE \
+            --region $AWS_REGION 2>/dev/null || echo "permission already exists"
+          aws events put-targets \
+            --rule $EVENTBRIDGE_RULE \
+            --targets "Id=1,Arn=arn:aws:lambda:$AWS_REGION:$ACCOUNT_ID:function:$LAMBDA_FN" \
+            --region $AWS_REGION

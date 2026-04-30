@@ -1,0 +1,35 @@
+# Reduce build context — only ship what the Dockerfile actually copies
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.git
+**/.gitignore
+**/.env
+**/.venv
+**/venv
+**/node_modules
+*.pkl
+*.npy
+*.db
+*.journal*
+*.log
+*.bak
+
+# Big stuff we don't need in Lambda
+v10_ml_v6/
+v10_ml_v7/
+factor_tournament/
+market_data/
+backtest_results*/
+audit_*/
+optuna_*.db
+shared_data*/
+production/logs/
+production/state/
+production/data/
+production/av_health/
+production/tracking/
+production/cloud/.dockerignore
+
+# Account .env files (secrets — set as Lambda env vars instead)
+production/accounts/*.env
