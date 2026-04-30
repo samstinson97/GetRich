@@ -1,7 +1,10 @@
 # AWS Lambda container for daily signal generator (3:55 PM ET weekdays)
 # Build: docker build -t getrich-signal-gen .
 # Test:  docker run --rm getrich-signal-gen
-FROM public.ecr.aws/lambda/python:3.11
+# Using py3.12 (Amazon Linux 2023, glibc 2.34) so manylinux_2_28+ wheels
+# install without source compile. Local dev was 3.11 but all our deps
+# support 3.12 cleanly.
+FROM public.ecr.aws/lambda/python:3.12
 
 # No system deps needed. LightGBM 4.6.0 wheel bundles libgomp; numpy/scipy
 # wheels are statically linked. Skipping system package install entirely.
