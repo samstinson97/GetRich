@@ -1,18 +1,20 @@
 """Lambda entrypoint for daily signal generator.
 
-Triggered by EventBridge cron at 19:55 UTC (3:55 PM EST) Mon-Fri.
-During EDT (March-Nov) the rule is 19:55 UTC = 3:55 PM EDT.
+Triggered by EventBridge cron at 19:55 UTC weekdays.
 
 Flow:
-  1. download_state() pulls last-run state.json + ohlcv_cache.pkl from S3
-  2. Symlink/copy state files into the locations the v3 + v4 scripts expect
-  3. Run v3_fresh, v4_gtc, v4_moc sequentially (Lambda is single-process)
-  4. update_dashboard.py + reconcile_fills.py
-  5. upload_state() pushes everything back to S3
+  1. download_state() pulls last-run state.json + ohlcv_cache.pkl from S3 → /tmp/state/
+  2. Mirror /var/task/production/{ml_v3,ml_v4}/ → /tmp/work/ (writable)
+  3. Copy state files into /tmp/work/.../ where the scripts expect them
+  4. Spawn v3_fresh + v4_gtc as parallel subprocesses (each with isolated env)
+  5. Wait for v4_gtc, then spawn v4_moc (it reads v4_gtc's shared scoring state)
+  6. Wait for all to finish
+  7. Copy state files back to /tmp/state/, upload to S3
 """
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -23,14 +25,12 @@ from pathlib import Path
 sys.path.insert(0, "/var/task")
 import s3_state
 
-# Use /tmp/state as the runtime state location.
-# Lambda's /var/task is read-only, so we copy ml_v3/ and ml_v4/ subtrees to
-# /tmp/work/ (writable) and run from there. State files load/save under /tmp/work/.
 STATE_DIR = Path("/tmp/state")
 WORK_DIR = Path("/tmp/work")
-TASK_ROOT = Path("/var/task")  # source: where Dockerfile copied production/, v10_ml_v3/, etc.
+TASK_ROOT = Path("/var/task")
+PYTHON = sys.executable
 
-# 2026 NYSE holidays (matches run_all_signals.py)
+# 2026 NYSE holidays
 NYSE_HOLIDAYS_2026 = {
     date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16), date(2026, 4, 3),
     date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 3), date(2026, 9, 7),
@@ -46,9 +46,22 @@ def is_market_day(d=None):
     return d not in NYSE_HOLIDAYS_2026
 
 
-def link_state_into_module(module_dir, state_files):
-    """For each state file, copy from /tmp/state/{rel} into the module dir
-    where the early_signal script expects to find it."""
+def _ensure_work_module(name):
+    """Mirror production/<name>/ from /var/task to writable /tmp/work/.
+    Always force-fresh. Also creates logs/state/tracking subdirs."""
+    src = TASK_ROOT / "production" / name
+    dst = WORK_DIR / "production" / name
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    (WORK_DIR / "production" / "logs").mkdir(parents=True, exist_ok=True)
+    (WORK_DIR / "production" / "state").mkdir(parents=True, exist_ok=True)
+    (WORK_DIR / "production" / "tracking").mkdir(parents=True, exist_ok=True)
+    return dst
+
+
+def _stage_state_into_module(module_dir, state_files):
+    """Copy state files from /tmp/state/ into the module dir before running."""
     for rel_in_state, rel_in_module in state_files.items():
         src = STATE_DIR / rel_in_state
         dst = Path(module_dir) / rel_in_module
@@ -57,8 +70,8 @@ def link_state_into_module(module_dir, state_files):
             shutil.copy(src, dst)
 
 
-def link_state_back(module_dir, state_files):
-    """After run, copy module dir state back to /tmp/state for upload."""
+def _stage_state_back(module_dir, state_files):
+    """Copy state files back from module dir to /tmp/state/ after running."""
     for rel_in_state, rel_in_module in state_files.items():
         src = Path(module_dir) / rel_in_module
         dst = STATE_DIR / rel_in_state
@@ -67,106 +80,29 @@ def link_state_back(module_dir, state_files):
             shutil.copy(src, dst)
 
 
-def _ensure_work_module(name):
-    """Mirror production/<name>/ from read-only /var/task to writable /tmp/work.
-    Always force-fresh copy because Lambda may reuse /tmp across invocations
-    and we want the latest /var/task contents (including universe_live.csv)."""
-    src = TASK_ROOT / "production" / name
-    dst = WORK_DIR / "production" / name
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst)
-    # Ensure logs/, state/, tracking/ subtrees exist (writable)
-    (WORK_DIR / "production" / "logs").mkdir(parents=True, exist_ok=True)
-    (WORK_DIR / "production" / "state").mkdir(parents=True, exist_ok=True)
-    (WORK_DIR / "production" / "tracking").mkdir(parents=True, exist_ok=True)
-    return dst
+def _make_env(extra):
+    """Return a fresh os.environ copy with `extra` overrides applied."""
+    env = dict(os.environ)
+    env.update(extra)
+    return env
 
 
-def run_v3_fresh():
-    """Run v3 fresh signal generator inline (no subprocess, Lambda is one process)."""
-    print(f"[{datetime.now():%H:%M:%S}] === v3_fresh ===")
-    module_dir = _ensure_work_module("ml_v3")
-    state_map = {
-        "ml_v3/state_fresh.json": "state_fresh.json",
-        "ml_v3/ohlcv_cache.pkl": "ohlcv_cache.pkl",
-    }
-    link_state_into_module(module_dir, state_map)
-
-    # Set env for v3 account from secrets. The v3 script reads ALPACA_API_KEY
-    # directly (not APCA_*); set both to be safe.
-    os.environ["ALPACA_API_KEY"]      = os.environ["V3_FRESH_API_KEY"]
-    os.environ["ALPACA_SECRET_KEY"]   = os.environ["V3_FRESH_API_SECRET"]
-    os.environ["APCA_API_KEY_ID"]     = os.environ["V3_FRESH_API_KEY"]
-    os.environ["APCA_API_SECRET_KEY"] = os.environ["V3_FRESH_API_SECRET"]
-    os.environ["V3_STATE_FILE"] = str(module_dir / "state_fresh.json")
-
-    # Run as module
-    os.chdir(str(TASK_ROOT))
-    sys.path.insert(0, str(module_dir))
-    try:
-        # Force fresh module load each invocation (Lambda may reuse container)
-        for mod_name in list(sys.modules):
-            if mod_name.startswith("early_signal_ml_v3"):
-                del sys.modules[mod_name]
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "early_signal_ml_v3", str(module_dir / "early_signal_ml_v3.py"))
-        m = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(m)
-        m.run_signal(dry_run=False)
-    finally:
-        link_state_back(module_dir, state_map)
-        sys.path.remove(str(module_dir))
-
-
-def run_v4(account):
-    """account: 'gtc' or 'moc'."""
-    print(f"[{datetime.now():%H:%M:%S}] === v4_{account} ===")
-    module_dir = _ensure_work_module("ml_v4")
-    state_map = {
-        f"ml_v4/state_{account}.json": f"state_{account}.json",
-        f"ml_v4/ohlcv_cache_{account}.pkl": f"ohlcv_cache_{account}.pkl",
-        f"ml_v4/shap_history_{'gtc' if account == 'gtc' else ''}.json":
-            f"shap_history{'_gtc' if account == 'gtc' else ''}.json",
-        "shared_scoring_state.pkl": "../shared_scoring_state.pkl",
-    }
-    link_state_into_module(module_dir, state_map)
-
-    if account == "gtc":
-        os.environ["ALPACA_API_KEY"]      = os.environ["V4_GTC_API_KEY"]
-        os.environ["ALPACA_SECRET_KEY"]   = os.environ["V4_GTC_API_SECRET"]
-        os.environ["APCA_API_KEY_ID"]     = os.environ["V4_GTC_API_KEY"]
-        os.environ["APCA_API_SECRET_KEY"] = os.environ["V4_GTC_API_SECRET"]
-        os.environ["V4_STOP_MODE"] = "gtc"
-        os.environ["V4_SCORING_MODE"] = "write"
-    else:  # moc
-        os.environ["ALPACA_API_KEY"]      = os.environ["V4_MOC_API_KEY"]
-        os.environ["ALPACA_SECRET_KEY"]   = os.environ["V4_MOC_API_SECRET"]
-        os.environ["APCA_API_KEY_ID"]     = os.environ["V4_MOC_API_KEY"]
-        os.environ["APCA_API_SECRET_KEY"] = os.environ["V4_MOC_API_SECRET"]
-        os.environ["V4_STOP_MODE"] = "moc"
-        os.environ["V4_SCORING_MODE"] = "read"
-
-    os.chdir(str(TASK_ROOT))
-    sys.path.insert(0, str(module_dir))
-    try:
-        for mod_name in list(sys.modules):
-            if mod_name.startswith("early_signal_ml_v4"):
-                del sys.modules[mod_name]
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "early_signal_ml_v4", str(module_dir / "early_signal_ml_v4.py"))
-        m = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(m)
-        m.run_signal(dry_run=False)
-    finally:
-        link_state_back(module_dir, state_map)
-        sys.path.remove(str(module_dir))
+def _spawn(name, script_path, env_overrides, log_path):
+    """Spawn a subprocess for one signal generator account."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_fh = open(log_path, "w")
+    proc = subprocess.Popen(
+        [PYTHON, script_path],
+        env=_make_env(env_overrides),
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        cwd=str(WORK_DIR),
+    )
+    print(f"[{datetime.now():%H:%M:%S}] {name}: PID {proc.pid} -> {log_path.name}")
+    return proc, log_fh
 
 
 def handler(event, context):
-    """Lambda entrypoint. EventBridge passes empty event."""
     print(f"=== Signal generator Lambda starting at {datetime.utcnow():%Y-%m-%d %H:%M:%S} UTC ===")
     print(f"Local date: {date.today()}")
 
@@ -177,32 +113,139 @@ def handler(event, context):
     t0 = time.time()
     errors = []
 
-    # Step 1: Download state from S3
+    # 1. Download state from S3
     try:
         s3_state.download_state()
     except Exception as e:
         print(f"[ERROR] state download: {e}")
         errors.append(("state_download", str(e)))
-        # Continue — first run may have no state
 
-    # Step 2: Run all 3 signal generators sequentially (Lambda is one process)
-    for fn, name in [(run_v3_fresh, "v3_fresh"), (lambda: run_v4("gtc"), "v4_gtc"),
-                     (lambda: run_v4("moc"), "v4_moc")]:
-        try:
-            fn()
-        except SystemExit as e:
-            # early_signal scripts may sys.exit() — treat 0 as success
-            if e.code == 0:
-                print(f"  {name}: clean exit")
-            else:
-                print(f"  {name}: SystemExit({e.code})")
-                errors.append((name, f"SystemExit({e.code})"))
-        except Exception as e:
-            print(f"  {name}: ERROR {e}")
-            traceback.print_exc()
-            errors.append((name, str(e)))
+    # 2. Mirror module dirs to writable /tmp/work/
+    v3_module = _ensure_work_module("ml_v3")
+    v4_module = _ensure_work_module("ml_v4")
 
-    # Step 3: Always try to upload state, even if some accounts failed
+    # 3. Stage state files into each module
+    v3_state_map = {
+        "ml_v3/state_fresh.json": "state_fresh.json",
+        "ml_v3/ohlcv_cache.pkl": "ohlcv_cache.pkl",
+    }
+    v4_gtc_state_map = {
+        "ml_v4/state_gtc.json": "state_gtc.json",
+        "ml_v4/ohlcv_cache_gtc.pkl": "ohlcv_cache_gtc.pkl",
+        "ml_v4/shap_history_gtc.json": "shap_history_gtc.json",
+    }
+    v4_moc_state_map = {
+        "ml_v4/state_moc.json": "state_moc.json",
+        "ml_v4/ohlcv_cache_moc.pkl": "ohlcv_cache_moc.pkl",
+        "ml_v4/shap_history.json": "shap_history.json",
+    }
+    shared_scoring_map = {
+        "shared_scoring_state.pkl": "../shared_scoring_state.pkl",
+    }
+    _stage_state_into_module(v3_module, v3_state_map)
+    _stage_state_into_module(v4_module, v4_gtc_state_map)
+    _stage_state_into_module(v4_module, v4_moc_state_map)
+    _stage_state_into_module(v4_module, shared_scoring_map)
+
+    # 4. Common Alpaca env for all subprocesses
+    base_env = {"PYTHONPATH": str(TASK_ROOT)}
+
+    # 5. Launch v3_fresh + v4_gtc in PARALLEL via subprocess
+    v3_log = WORK_DIR / "production" / "logs" / "v3_fresh.log"
+    v4_gtc_log = WORK_DIR / "production" / "logs" / "v4_gtc.log"
+    v4_moc_log = WORK_DIR / "production" / "logs" / "v4_moc.log"
+
+    v3_env = {
+        **base_env,
+        "ALPACA_API_KEY": os.environ["V3_FRESH_API_KEY"],
+        "ALPACA_SECRET_KEY": os.environ["V3_FRESH_API_SECRET"],
+        "APCA_API_KEY_ID": os.environ["V3_FRESH_API_KEY"],
+        "APCA_API_SECRET_KEY": os.environ["V3_FRESH_API_SECRET"],
+        "V3_STATE_FILE": str(v3_module / "state_fresh.json"),
+    }
+    v4_gtc_env = {
+        **base_env,
+        "ALPACA_API_KEY": os.environ["V4_GTC_API_KEY"],
+        "ALPACA_SECRET_KEY": os.environ["V4_GTC_API_SECRET"],
+        "APCA_API_KEY_ID": os.environ["V4_GTC_API_KEY"],
+        "APCA_API_SECRET_KEY": os.environ["V4_GTC_API_SECRET"],
+        "V4_STOP_MODE": "gtc",
+        "V4_SCORING_MODE": "write",
+    }
+    v4_moc_env = {
+        **base_env,
+        "ALPACA_API_KEY": os.environ["V4_MOC_API_KEY"],
+        "ALPACA_SECRET_KEY": os.environ["V4_MOC_API_SECRET"],
+        "APCA_API_KEY_ID": os.environ["V4_MOC_API_KEY"],
+        "APCA_API_SECRET_KEY": os.environ["V4_MOC_API_SECRET"],
+        "V4_STOP_MODE": "moc",
+        "V4_SCORING_MODE": "read",
+    }
+
+    v3_script = str(v3_module / "early_signal_ml_v3.py")
+    v4_script = str(v4_module / "early_signal_ml_v4.py")
+
+    print(f"[{datetime.now():%H:%M:%S}] Launching v3_fresh + v4_gtc in parallel...")
+    p_v3, fh_v3 = _spawn("v3_fresh", v3_script, v3_env, v3_log)
+    time.sleep(5)  # stagger to avoid yfinance rate limits
+    p_gtc, fh_gtc = _spawn("v4_gtc", v4_script, v4_gtc_env, v4_gtc_log)
+
+    # Wait for v4_gtc (v4_moc reads its shared scoring state)
+    try:
+        rc_gtc = p_gtc.wait(timeout=600)
+        fh_gtc.close()
+        print(f"[{datetime.now():%H:%M:%S}] v4_gtc finished rc={rc_gtc}")
+        if rc_gtc != 0:
+            errors.append(("v4_gtc", f"rc={rc_gtc}"))
+    except subprocess.TimeoutExpired:
+        p_gtc.kill()
+        fh_gtc.close()
+        errors.append(("v4_gtc", "timeout 600s"))
+
+    # Now spawn v4_moc (depends on v4_gtc's shared scoring state)
+    print(f"[{datetime.now():%H:%M:%S}] Launching v4_moc...")
+    p_moc, fh_moc = _spawn("v4_moc", v4_script, v4_moc_env, v4_moc_log)
+
+    # Wait for v3 (might still be running) and v4_moc
+    try:
+        rc_v3 = p_v3.wait(timeout=600)
+        fh_v3.close()
+        print(f"[{datetime.now():%H:%M:%S}] v3_fresh finished rc={rc_v3}")
+        if rc_v3 != 0:
+            errors.append(("v3_fresh", f"rc={rc_v3}"))
+    except subprocess.TimeoutExpired:
+        p_v3.kill()
+        fh_v3.close()
+        errors.append(("v3_fresh", "timeout 600s"))
+
+    try:
+        rc_moc = p_moc.wait(timeout=600)
+        fh_moc.close()
+        print(f"[{datetime.now():%H:%M:%S}] v4_moc finished rc={rc_moc}")
+        if rc_moc != 0:
+            errors.append(("v4_moc", f"rc={rc_moc}"))
+    except subprocess.TimeoutExpired:
+        p_moc.kill()
+        fh_moc.close()
+        errors.append(("v4_moc", "timeout 600s"))
+
+    # Print last lines of each log for visibility in CloudWatch
+    for name, log in [("v3_fresh", v3_log), ("v4_gtc", v4_gtc_log), ("v4_moc", v4_moc_log)]:
+        if log.exists():
+            print(f"--- last 20 lines of {name} log ---")
+            try:
+                lines = log.read_text(errors="replace").splitlines()[-20:]
+                print("\n".join(lines))
+            except Exception as e:
+                print(f"  could not read log: {e}")
+
+    # 6. Stage state back to /tmp/state/ for S3 upload
+    _stage_state_back(v3_module, v3_state_map)
+    _stage_state_back(v4_module, v4_gtc_state_map)
+    _stage_state_back(v4_module, v4_moc_state_map)
+    _stage_state_back(v4_module, shared_scoring_map)
+
+    # 7. Upload state to S3
     try:
         s3_state.upload_state()
     except Exception as e:
@@ -220,5 +263,4 @@ def handler(event, context):
 
 
 if __name__ == "__main__":
-    # Local test (won't have S3 access unless AWS creds set)
     handler({}, None)
