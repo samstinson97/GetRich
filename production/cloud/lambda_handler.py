@@ -87,24 +87,28 @@ def _make_env(extra):
     return env
 
 
-def _spawn(name, script_path, env_overrides, log_path):
+def _spawn(name, script_path, env_overrides, log_path, dry_run=False):
     """Spawn a subprocess for one signal generator account."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(log_path, "w")
+    cmd = [PYTHON, script_path]
+    if dry_run:
+        cmd.append("--dry-run")
     proc = subprocess.Popen(
-        [PYTHON, script_path],
+        cmd,
         env=_make_env(env_overrides),
         stdout=log_fh,
         stderr=subprocess.STDOUT,
         cwd=str(WORK_DIR),
     )
-    print(f"[{datetime.now():%H:%M:%S}] {name}: PID {proc.pid} -> {log_path.name}")
+    print(f"[{datetime.now():%H:%M:%S}] {name}: PID {proc.pid} -> {log_path.name} (dry_run={dry_run})")
     return proc, log_fh
 
 
 def handler(event, context):
+    dry_run = bool((event or {}).get("dry_run", False))
     print(f"=== Signal generator Lambda starting at {datetime.utcnow():%Y-%m-%d %H:%M:%S} UTC ===")
-    print(f"Local date: {date.today()}")
+    print(f"Local date: {date.today()}  dry_run={dry_run}")
 
     if not is_market_day():
         print(f"Market closed today ({date.today():%A %Y-%m-%d}). Skipping.")
@@ -186,9 +190,9 @@ def handler(event, context):
     v4_script = str(v4_module / "early_signal_ml_v4.py")
 
     print(f"[{datetime.now():%H:%M:%S}] Launching v3_fresh + v4_gtc in parallel...")
-    p_v3, fh_v3 = _spawn("v3_fresh", v3_script, v3_env, v3_log)
+    p_v3, fh_v3 = _spawn("v3_fresh", v3_script, v3_env, v3_log, dry_run=dry_run)
     time.sleep(5)  # stagger to avoid yfinance rate limits
-    p_gtc, fh_gtc = _spawn("v4_gtc", v4_script, v4_gtc_env, v4_gtc_log)
+    p_gtc, fh_gtc = _spawn("v4_gtc", v4_script, v4_gtc_env, v4_gtc_log, dry_run=dry_run)
 
     # Wait for v4_gtc (v4_moc reads its shared scoring state)
     try:
@@ -204,7 +208,7 @@ def handler(event, context):
 
     # Now spawn v4_moc (depends on v4_gtc's shared scoring state)
     print(f"[{datetime.now():%H:%M:%S}] Launching v4_moc...")
-    p_moc, fh_moc = _spawn("v4_moc", v4_script, v4_moc_env, v4_moc_log)
+    p_moc, fh_moc = _spawn("v4_moc", v4_script, v4_moc_env, v4_moc_log, dry_run=dry_run)
 
     # Wait for v3 (might still be running) and v4_moc
     try:
