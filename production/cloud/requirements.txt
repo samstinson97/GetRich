@@ -9,6 +9,7 @@ alpaca-trade-api>=3.1.1   # Deprecated SDK — still used by update_dashboard.py
 pandas>=2.0,<4.0          # AL2023 has glibc 2.34, so any manylinux_2_28+ wheel works
 numpy>=1.26,<3.0
 scipy>=1.11
+shap>=0.43                # SHAP monitoring (alpha decay alerts) used by both v3 and v4
 pyyaml>=6.0
 python-dotenv>=1.0
 requests>=2.31
